@@ -54,10 +54,7 @@ impl SourceMap {
             }
         }
 
-        let load_section = |id: gimli::SectionId| -> std::result::Result<
-            EndianSlice<RunTimeEndian>,
-            gimli::Error,
-        > {
+        let load_section = |id: gimli::SectionId| -> std::result::Result<EndianSlice<RunTimeEndian>, gimli::Error> {
             let name = id.name();
             let data = custom_sections
                 .get(name)
