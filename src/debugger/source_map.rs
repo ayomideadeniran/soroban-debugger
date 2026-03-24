@@ -1,9 +1,9 @@
 use crate::{Result, DebuggerError};
 use gimli::{Dwarf, EndianSlice, RunTimeEndian};
-use object::{Object, ObjectSection};
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
+use wasmparser::{Parser, Payload};
 
 /// Represents a source code location
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -19,6 +19,8 @@ pub struct SourceMap {
     offsets: BTreeMap<usize, SourceLocation>,
     /// Cache of source file contents
     source_cache: HashMap<PathBuf, String>,
+    /// Code section payload range (when known), used to normalize DWARF addresses.
+    code_section_range: Option<std::ops::Range<usize>>,
 }
 
 impl SourceMap {
@@ -27,27 +29,39 @@ impl SourceMap {
         Self {
             offsets: BTreeMap::new(),
             source_cache: HashMap::new(),
+            code_section_range: None,
         }
     }
 
     /// Load debug info from WASM bytes and build the mapping
     pub fn load(&mut self, wasm_bytes: &[u8]) -> Result<()> {
-        let obj = object::File::parse(wasm_bytes)
-            .map_err(|e| DebuggerError::WasmLoadError(format!("Failed to parse WASM object file: {}", e)))?;
+        self.offsets.clear();
+        self.code_section_range = crate::utils::wasm::code_section_range(wasm_bytes)?;
 
-        let load_section =
-            |id: gimli::SectionId| -> std::result::Result<EndianSlice<RunTimeEndian>, gimli::Error> {
-                let data = obj
-                    .section_by_name(id.name())
-                    .or_else(|| obj.section_by_name(&format!(".{}", id.name())))
-                    .and_then(|section| section.data().ok())
-                    .unwrap_or(&[]);
+        let mut custom_sections: HashMap<String, &[u8]> = HashMap::new();
+        for payload in Parser::new(0).parse_all(wasm_bytes) {
+            let payload = payload
+                .map_err(|e| DebuggerError::WasmLoadError(format!("Failed to parse WASM: {}", e)))?;
+            if let Payload::CustomSection(reader) = payload {
+                custom_sections.insert(reader.name().to_string(), reader.data());
+            }
+        }
 
-                Ok(EndianSlice::new(data, RunTimeEndian::Little))
-            };
+        let load_section = |id: gimli::SectionId| {
+            let name = id.name();
+            let data = custom_sections
+                .get(name)
+                .or_else(|| custom_sections.get(&format!(".{}", name)))
+                .or_else(|| custom_sections.get(name.trim_start_matches('.')))
+                .copied()
+                .unwrap_or(&[]);
 
-        let dwarf = Dwarf::load(&load_section)
-            .map_err(|e| DebuggerError::WasmLoadError(format!("Failed to load DWARF sections: {}", e)))?;
+            Ok(EndianSlice::new(data, RunTimeEndian::Little))
+        };
+
+        let dwarf = Dwarf::load(&load_section).map_err(|e| {
+            DebuggerError::WasmLoadError(format!("Failed to load DWARF sections: {}", e))
+        })?;
 
         let mut units = dwarf.units();
         while let Some(header) = units.next()
@@ -61,8 +75,7 @@ impl SourceMap {
                     if let Some(file_path) =
                         self.get_file_path(&dwarf, &unit, header, row.file_index())
                     {
-                        // In WASM, DWARF addresses are usually offsets into the code section
-                        let offset = row.address() as usize;
+                        let offset = self.normalize_wasm_offset(row.address() as usize, wasm_bytes.len());
                         let line = row.line().map(|l| l.get() as u32).unwrap_or(0);
                         let column = match row.column() {
                             gimli::ColumnType::LeftEdge => None,
@@ -83,6 +96,43 @@ impl SourceMap {
         }
 
         Ok(())
+    }
+
+    /// Returns `true` if no mappings were loaded.
+    pub fn is_empty(&self) -> bool {
+        self.offsets.is_empty()
+    }
+
+    /// Number of mapped offsets.
+    pub fn len(&self) -> usize {
+        self.offsets.len()
+    }
+
+    /// Iterate over mappings as `(offset, location)` pairs.
+    pub fn mappings(&self) -> impl Iterator<Item = (usize, &SourceLocation)> {
+        self.offsets.iter().map(|(o, l)| (*o, l))
+    }
+
+    fn normalize_wasm_offset(&self, dwarf_address: usize, wasm_len: usize) -> usize {
+        let Some(code_range) = &self.code_section_range else {
+            return dwarf_address;
+        };
+
+        // Common case: DWARF line-program addresses are offsets into the code-section payload.
+        let code_start = code_range.start;
+        let code_len = code_range.end.saturating_sub(code_range.start);
+
+        // If the address already looks like a module/file offset, keep it.
+        if dwarf_address >= code_start && dwarf_address < wasm_len {
+            return dwarf_address;
+        }
+
+        // Otherwise, treat addresses within the code-section payload length as relative.
+        if dwarf_address < code_len {
+            return code_start.saturating_add(dwarf_address);
+        }
+
+        dwarf_address
     }
 
     fn get_file_path(

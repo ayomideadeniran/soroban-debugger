@@ -15,7 +15,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="${SCRIPT_DIR}/contracts"
 WASM_DIR="${SCRIPT_DIR}/wasm"
-WORKSPACE_TARGET_DIR="${CONTRACTS_DIR}/target/wasm32-unknown-unknown/release"
+RELEASE_TARGET_DIR="${CONTRACTS_DIR}/target/wasm32-unknown-unknown/release"
+DEBUG_TARGET_DIR="${CONTRACTS_DIR}/target/wasm32-unknown-unknown/release-debug"
 
 # Check if wasm32 target is installed
 if ! rustup target list --installed | grep -q "wasm32-unknown-unknown"; then
@@ -45,13 +46,26 @@ for contract_dir in "${CONTRACTS_DIR}"/*/; do
                 exit 1
             fi
 
-            wasm_file="${WORKSPACE_TARGET_DIR}/${package_name//-/_}.wasm"
+            wasm_file="${RELEASE_TARGET_DIR}/${package_name//-/_}.wasm"
             
             if [ -f "${wasm_file}" ]; then
                 cp "${wasm_file}" "${WASM_DIR}/${contract_name}.wasm"
                 echo "    ✓ Built ${contract_name}.wasm"
             else
                 echo "    ✗ Failed to find WASM output for ${contract_name}"
+                exit 1
+            fi
+
+            echo "  Building ${contract_name} (debug info)..."
+            cargo build --profile release-debug --target wasm32-unknown-unknown
+
+            debug_wasm_file="${DEBUG_TARGET_DIR}/${package_name//-/_}.wasm"
+
+            if [ -f "${debug_wasm_file}" ]; then
+                cp "${debug_wasm_file}" "${WASM_DIR}/${contract_name}_debug.wasm"
+                echo "    Built ${contract_name}_debug.wasm"
+            else
+                echo "    Failed to find debug WASM output for ${contract_name}"
                 exit 1
             fi
         )

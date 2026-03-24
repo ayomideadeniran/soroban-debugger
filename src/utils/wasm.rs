@@ -231,6 +231,22 @@ pub fn get_module_info(wasm_bytes: &[u8]) -> Result<ModuleInfo> {
     Ok(info)
 }
 
+/// Returns the byte range of the WASM code section payload within the module, if present.
+///
+/// This range is suitable for normalizing DWARF line-program addresses that are expressed
+/// as offsets into the code section.
+pub fn code_section_range(wasm_bytes: &[u8]) -> Result<Option<std::ops::Range<usize>>> {
+    for payload in Parser::new(0).parse_all(wasm_bytes) {
+        let payload = payload
+            .map_err(|e| DebuggerError::WasmLoadError(format!("Failed to parse WASM: {}", e)))?;
+        if let Payload::CodeSectionStart { range, .. } = payload {
+            return Ok(Some(range));
+        }
+    }
+
+    Ok(None)
+}
+
 /// Information about a WASM module.
 #[derive(Debug, Default, Serialize)]
 pub struct ModuleInfo {

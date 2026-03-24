@@ -1,5 +1,6 @@
 use crate::debugger::breakpoint::BreakpointManager;
 use crate::debugger::instruction_pointer::StepMode;
+use crate::debugger::source_map::{SourceLocation, SourceMap};
 use crate::debugger::state::DebugState;
 use crate::debugger::stepper::Stepper;
 use crate::plugin::{EventContext, ExecutionEvent};
@@ -17,6 +18,7 @@ pub struct DebuggerEngine {
     state: Arc<Mutex<DebugState>>,
     stepper: Stepper,
     instrumenter: Instrumenter,
+    source_map: Option<SourceMap>,
     paused: bool,
     instruction_debug_enabled: bool,
 }
@@ -38,13 +40,44 @@ impl DebuggerEngine {
             state: Arc::new(Mutex::new(DebugState::new())),
             stepper: Stepper::new(),
             instrumenter: Instrumenter::new(),
+            source_map: None,
             paused: false,
             instruction_debug_enabled: false,
         }
     }
 
+    /// Best-effort DWARF source map loading.
+    ///
+    /// Missing or malformed debug information does not fail execution; it simply leaves the
+    /// engine without source mappings.
+    pub fn try_load_source_map(&mut self, wasm_bytes: &[u8]) {
+        let mut source_map = SourceMap::new();
+        match source_map.load(wasm_bytes) {
+            Ok(()) if !source_map.is_empty() => {
+                self.source_map = Some(source_map);
+            }
+            _ => {
+                self.source_map = None;
+            }
+        }
+    }
+
+    pub fn source_map(&self) -> Option<&SourceMap> {
+        self.source_map.as_ref()
+    }
+
+    pub fn source_map_mut(&mut self) -> Option<&mut SourceMap> {
+        self.source_map.as_mut()
+    }
+
+    pub fn lookup_source_location(&self, wasm_offset: usize) -> Option<SourceLocation> {
+        self.source_map.as_ref()?.lookup(wasm_offset)
+    }
+
     /// Enable instruction-level debugging.
     pub fn enable_instruction_debug(&mut self, wasm_bytes: &[u8]) -> Result<()> {
+        self.try_load_source_map(wasm_bytes);
+
         let instructions = self
             .instrumenter
             .parse_instructions(wasm_bytes)
