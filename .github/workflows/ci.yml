@@ -105,7 +105,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Needed to checkout main
+          fetch-depth: 0 # Needed to benchmark origin/main in a detached worktree
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -116,35 +116,13 @@ jobs:
       - name: Install critcmp
         run: cargo install critcmp --version 0.1.7 || true # Ignore if already in cache
 
-      - name: Run benchmarks (current)
-        run: cargo bench -- --save-baseline new --noplot
-
-      - name: Checkout main and run benchmarks (baseline)
-        run: |
-          git checkout main
-          cargo bench -- --save-baseline base --noplot
-          git checkout -
-
-      - name: Compare benchmarks and check for regressions (>10%)
+      - name: Verify benchmark script isolation behavior
         shell: bash
-        run: |
-          set +e
-          output="$(critcmp base new --threshold 10 2>&1)"
-          status=$?
-          set -e
+        run: bash scripts/test_benchmark_regressions.sh
 
-          echo "$output"
-
-          if [ "$status" -eq 0 ]; then
-            exit 0
-          fi
-
-          if echo "$output" | grep -Fq "no benchmark comparisons to show"; then
-            echo "No overlapping benchmark IDs between 'base' and 'new'; skipping regression gate."
-            exit 0
-          fi
-
-          exit "$status"
+      - name: Run benchmark regression check
+        shell: bash
+        run: bash scripts/check_benchmark_regressions.sh
 
   check-manpages:
     name: Check man page sync
