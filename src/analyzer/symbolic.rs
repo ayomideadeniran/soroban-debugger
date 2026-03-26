@@ -625,6 +625,7 @@ mod tests {
             paths: Vec::new(),
             metadata: SymbolicReportMetadata {
                 config: SymbolicConfig::default(),
+                seed: None,
                 generated_input_combinations: 0,
                 attempted_input_combinations: 0,
                 distinct_paths_recorded: 0,
@@ -655,6 +656,7 @@ mod tests {
             paths: Vec::new(),
             metadata: SymbolicReportMetadata {
                 config: SymbolicConfig::default(),
+                seed: None,
                 generated_input_combinations: 0,
                 attempted_input_combinations: 0,
                 distinct_paths_recorded: 0,
@@ -793,6 +795,7 @@ mod tests {
             }],
             metadata: SymbolicReportMetadata {
                 config: SymbolicConfig::fast(),
+                seed: None,
                 generated_input_combinations: 10,
                 attempted_input_combinations: 1,
                 distinct_paths_recorded: 1,

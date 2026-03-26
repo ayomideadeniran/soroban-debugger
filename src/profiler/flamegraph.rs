@@ -1,4 +1,4 @@
-use crate::profiler::analyzer::{FunctionProfile, OptimizationReport};
+use crate::profiler::analyzer::OptimizationReport;
 use crate::Result;
 
 #[derive(Debug, Clone)]
@@ -73,7 +73,7 @@ impl FlameGraphGenerator {
         output
     }
 
-    pub fn generate_svg(stacks: &[FlameGraphStack], width: usize, height: usize) -> Result<String> {
+    pub fn generate_svg(stacks: &[FlameGraphStack], width: usize, _height: usize) -> Result<String> {
         let collapsed = Self::to_collapsed_stack_format(stacks);
         let reader = std::io::Cursor::new(collapsed);
 
@@ -84,7 +84,8 @@ impl FlameGraphGenerator {
             .font_size(12);
 
         let mut svg = Vec::new();
-        renderer.render(reader, &mut svg)?;
+        inferno::flamegraph::from_reader(&mut options, reader, &mut svg)
+            .map_err(|e| crate::DebuggerError::FileError(e.to_string()))?;
 
         Ok(String::from_utf8(svg).map_err(|e| miette::miette!("Invalid UTF-8 in SVG: {}", e))?)
     }
@@ -113,6 +114,7 @@ impl FlameGraphGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::profiler::analyzer::FunctionProfile;
     use std::collections::HashMap;
 
     fn create_test_report() -> OptimizationReport {
